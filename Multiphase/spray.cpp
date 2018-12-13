@@ -493,15 +493,15 @@ void cspray::initparam()
 		m_bMelt = false;
 		m_bFreeze = false;
 		m_bFixSolid = false;
-		m_bSolid = true;
+		m_bSolid = false;
 		
-		if (NX != 96 || NY != 64 || NZ != 96)
+		if (NX != 32 || NY != 16 || NZ != 16)
 		{
 			printf("reset NX,NY,NZ!!!\n");
 			exit(-1000);
 		}
 		splitnum = 1;
-		initfluidparticle = 200000;
+		initfluidparticle = 50000;
 		parNumNow = initfluidparticle + nInitSolPoint;
 		parNumMax = parNumNow*splitnum;	//pouring gas particle.
 		pourNum = 0;
@@ -609,21 +609,21 @@ void cspray::initparam()
 	randfloatcnt = 10000;
 	renderpartiletype = TYPEAIR;
 
-	//*****************LBM***********************
-	hparam.Pr = 0.7;
-	hparam.Ra = 10000;
-	//hparam.U = 0.20;
-	hparam.R = 8.3144;	//气体普适常量
-	hparam.T0 = 0.04;
-	hparam.p0 = RHO * R *T0;
-	hparam.tau_f = 0.50;	//????存疑
-	hparam.tau_h = tau_f / Pr;
-	hparam.niu = tau_f * p0;
-	hparam.cv = (3 + 3)*R / 2.0;
-	hparam.wf = 2 * delta_T / (2 * tau_f + delta_T);
-	hparam.wh = 2 * delta_T / (2 * tau_h + delta_T);
-	hparam.total_E = 0.0;
-	hparam.T_heat = 200;
+	//*****************init LBM constant parameters***********************
+// 	LBMhparam.Pr = 0.7;
+// 	LBMhparam.Ra = 10000;
+// 	//hparam.U = 0.20;
+// 	LBMhparam.R = 8.3144;	//气体普适常量
+// 	LBMhparam.T0 = 0.04;
+// 	hparam.p0 = RHO * R *T0;
+// 	hparam.tau_f = 0.50;	//????存疑
+// 	hparam.tau_h = tau_f / Pr;
+// 	hparam.niu = tau_f * p0;
+// 	hparam.cv = (3 + 3)*R / 2.0;
+// 	hparam.wf = 2 * delta_T / (2 * tau_f + delta_T);
+// 	hparam.wh = 2 * delta_T / (2 * tau_h + delta_T);
+// 	hparam.total_E = 0.0;
+// 	hparam.T_heat = 200;
 	//*******************************************
 	
 
@@ -1257,23 +1257,28 @@ void cspray:: LBMwatersim()//LBM prpcess  Note：common FLIP， not multiFLIP
 		addexternalforce();
 		printTime(m_btimer, "addexternalforce", time2);
 
-		markgrid_lbm();
+		if (mframe==0)
+		{
+			markgrid_initlbm();
+		}
+		else
+		{
+			markgrid_lbm();
+		}
 		printTime(m_btimer, "markgrid_bubble", time2);
 
 		//3. grid-based solver
+		
 		mapvelp2g();
 		printTime(m_btimer, "mapvelp2g", time2);
-
-		sweepPhi(phifluid, TYPEFLUID);
-		sweepU(waterux, wateruy, wateruz, phifluid, mmark, TYPEFLUID);
-
+		////////////////
+		
 		setWaterBoundaryU(waterux, wateruy, wateruz);
 		printTime(m_btimer, "sweepU", time2);
 
 		project_CG(waterux, wateruy, wateruz);
 		printTime(m_btimer, "project_CG_bubble", time2);
-				
-		sweepU(waterux, wateruy, wateruz, phifluid, mmark, TYPEFLUID);
+	
 		setWaterBoundaryU(waterux, wateruy, wateruz);
 		printTime(m_btimer, "sweepU", time2);
 

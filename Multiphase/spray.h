@@ -7,7 +7,7 @@
 
 //NX,NY,NZ用来控制仿真空间在三个方向上分别有几个cell
 //const int NX=32,NY=32,NZ=32;
-const int NX=96,NY=64,NZ=96;  
+const int NX=32,NY=16,NZ=16;  
 //const int NX=128,NY=128,NZ=128;	//melting / 
 //const int NX = 128, NY = 128, NZ = 96;  //boiling high resolution
 //const int NX=128,NY=128,NZ=128;
@@ -409,7 +409,7 @@ public:
 //*******************************************************************************
 
 	//LBM的函数  20180320 GY
-
+	//brief Distribution functions for D3Q19
 //*******************************************************************************
 	public:
 		float *d_f, *d_h;
@@ -426,24 +426,24 @@ public:
 
 		float *h_rho, *d_rho, *h_E, *d_E, *h_T, *d_T;
 
-public:
-	int Re;		//雷诺数
-	float RHO;	//density
-	float U;	//初始化速度
-	float niu; //初始密度
-	float tau_f, tau_h;	//无量纲松弛时间
-	int  frame;//控制初始速度
-
-	float T0;
-	float R;
-	float p0;
-	float cv;
-	float Pr;
-	float Ra;
-	float delta_T;
-	float T_heat;
-	float total_E;
-	float wf, wh;
+//public:
+//	int Re;		//雷诺数
+//	float RHO;	//density
+//	float U;	//初始化速度
+//	float niu; //初始密度
+//	float tau_f, tau_h;	//无量纲松弛时间
+//	int  frame;//控制初始速度
+//
+//	float T0;
+//	float R;
+//	float p0;
+//	float cv;
+//	float Pr;
+//	float Ra;
+//	float delta_T;
+//	float T_heat;
+//	float total_E;
+//	float wf, wh;
 
 public:
 	float omega1, omega2, omega3;
@@ -454,6 +454,7 @@ public:
 	void LBMwatersim();
 	void LBMCollision();
 	void markgrid_lbm();
+	void markgrid_initlbm();
 	void LBMevolution();
 	void LBMCelltypeUpdate();
 //	void outputuxyz();
@@ -471,6 +472,7 @@ public:
 	void LBMinitparam();
 	//void initsim();
 	//void initLBM();
+	LBMConstrant LBM_hparam;
 };
 
 #endif

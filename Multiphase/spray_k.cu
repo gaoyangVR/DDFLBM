@@ -28,7 +28,7 @@ void copyparamtoGPU(FlipConstant hparam)
 	
 	checkCudaErrors(cudaMemcpyToSymbol(dparam, &hparam, sizeof(FlipConstant)));
 }
-void LBMcopyparamtoGPU(FlipConstant hparam)// FLIPConstant 包含 LBM参数
+void LBMcopyparamtoGPU(FlipConstant hparam)
 {
 
 	checkCudaErrors(cudaMemcpyToSymbol(dparam, &hparam, sizeof(FlipConstant)));
@@ -542,7 +542,8 @@ __global__ void markfluid_dense(charray mark, float *parmass, char *parflag, int
 }
 //************************LBM*****************************
 //判断一下格子里含有的fluid particle的数量，再决定格子的属性
-__global__ void markfluid_LBMdense(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres)
+
+__global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres)//多出surface 格子
 {
 	uint idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
@@ -557,15 +558,52 @@ __global__ void markfluid_LBMdense(charray mark, float *parmass, char *parflag, 
 			{
 				if (parflag[p] == TYPEFLUID || parflag[p] == TYPESOLID)
 					cntfluidsolid++;
-				else if (parflag[p] == TYPEAIR)
+				else if (parflag[p] == TYPEAIR) //for now (181210), there is no air cell considered in LBM framework
 					cntair++;
 			}
 		}
 
 		if (cntfluidsolid == 0 && cntair == 0)
 			mark[idx] = TYPEVACUUM;
-		else if (cntfluidsolid > cntair)
+		else if (cntfluidsolid >= 8)  // initial particle number per cell is 8
 			mark[idx] = TYPEFLUID;
+		else mark[idx] = TYPESURFACE; // particle number [1,7]
+		
+	}
+}
+
+__global__ void markfluid_LBMdense(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres)
+{
+	uint idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	//int j = 0;
+	//for(int idx=0; idx<dparam.gnum; idx++)
+	{
+		int cntfluidsolid = 0, cntair = 0; 
+
+		uint start = gridstart[idx];
+		uint end = gridend[idx];
+		if (start != CELL_UNDEF)
+		{
+			for (uint p = start; p < end; ++p)
+			{
+				if (parflag[p] == TYPEFLUID || parflag[p] == TYPESOLID)
+					cntfluidsolid++;
+				else if (parflag[p] == TYPEAIR)
+					cntair++;
+			}
+		
+		}
+
+		if (cntfluidsolid == 0 && cntair == 0)
+		{
+			mark[idx] = TYPEVACUUM;
+		}
+		else if (cntfluidsolid > cntair)
+		{
+			mark[idx] = TYPEFLUID;
+		//	printf("%d ", cntfluidsolid);
+		}
 		else
 			mark[idx] = TYPEAIR;
 	}
@@ -841,7 +879,7 @@ __global__ void sweepu(farray outux, farray outuy, farray outuz, farray ux, farr
 		getijk(i, j, k, idx, NX + 1, NY, NZ);
 		if (i>1 && i<NX - 1 /*&& j>0 && j<N-1 && k>0 && k<N-1*/)
 		{
-			if ((mark(i, j, k) == TYPEAIR && mark(i - 1, j, k) == TYPEAIR) || (mark(i, j, k) == TYPEBOUNDARY && mark(i - 1, j, k) == TYPEBOUNDARY))
+			if ( (mark(i, j, k) == TYPEBOUNDARY && mark(i - 1, j, k) == TYPEBOUNDARY))
 			for (int di = -1; di <= 1; di += 2) for (int dj = -1; dj <= 1; dj += 2) for (int dk = -1; dk <= 1; dk += 2)
 			{
 				if (j + dj<0 || j + dj>NY - 1 || k + dk<0 || k + dk >NZ - 1)
@@ -873,7 +911,7 @@ __global__ void sweepu(farray outux, farray outuy, farray outuz, farray ux, farr
 		getijk(i, j, k, idx, NX, NY + 1, NZ);
 		if ( /*i>0 && i<N-1 &&*/ j>1 && j<NY - 1 /*&& k>0 && k<N-1*/)
 		{
-			if ((mark(i, j, k) == TYPEAIR && mark(i, j - 1, k) == TYPEAIR) || (mark(i, j, k) == TYPEBOUNDARY && mark(i, j - 1, k) == TYPEBOUNDARY))
+			if ( (mark(i, j, k) == TYPEBOUNDARY && mark(i, j - 1, k) == TYPEBOUNDARY))
 			for (int di = -1; di <= 1; di += 2) for (int dj = -1; dj <= 1; dj += 2) for (int dk = -1; dk <= 1; dk += 2)
 			{
 				if (i + di<0 || i + di>NX - 1 || k + dk<0 || k + dk >NZ - 1)
@@ -905,7 +943,7 @@ __global__ void sweepu(farray outux, farray outuy, farray outuz, farray ux, farr
 		getijk(i, j, k, idx, NX, NY, NZ + 1);
 		if ( /*i>0 && i<N-1 && j>0 && j<N-1 &&*/ k>1 && k<NZ - 1)
 		{
-			if ((mark(i, j, k) == TYPEAIR && mark(i, j, k - 1) == TYPEAIR) || (mark(i, j, k) == TYPEBOUNDARY && mark(i, j, k - 1) == TYPEBOUNDARY))
+			if ( (mark(i, j, k) == TYPEBOUNDARY && mark(i, j, k - 1) == TYPEBOUNDARY))
 			for (int di = -1; di <= 1; di += 2) for (int dj = -1; dj <= 1; dj += 2) for (int dk = -1; dk <= 1; dk += 2)
 			{
 				if (i + di<0 || i + di >NX - 1 || j + dj<0 || j + dj>NY - 1)
@@ -1142,7 +1180,7 @@ __global__ void reorderDataAndFindCellStartD(uint*   cellStart,        // output
 
 		if (index == 0 || hash != sharedHash[threadIdx.x])
 		{
-			cellStart[hash] = index;
+			cellStart[hash] = index;  //no. hash 's grid cellstart is index
 			if (index > 0)
 				cellEnd[sharedHash[threadIdx.x]] = index;
 		}

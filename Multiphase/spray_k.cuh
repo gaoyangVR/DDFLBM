@@ -226,3 +226,4 @@ __global__ void enforceForceSPH_SLCouple(float3 *ppos, float3 *pvel, float *pden
 
 // for LBM algorithm
  __global__ void markfluid_LBMdense(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres);
+ __global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres);

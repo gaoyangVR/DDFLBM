@@ -435,7 +435,7 @@ void cspray::initparticle_solidCoupling()///////////////////initparticle ³õÊ¼»¯Á
   		// 			for( float x = hparam.cellsize.x+hparam.samplespace; x<hparam.cellsize.x*(0.7*NX-1)-0.5f*hparam.samplespace && i<initfluidparticle; x+=hparam.samplespace )
   		// 			{
   		for (float y = hparam.cellsize.x + hparam.samplespace; y<hparam.cellsize.x*(NY - 1) - 0.5f*hparam.samplespace && i<initfluidparticle; y += hparam.samplespace)
-  		for (float x = hparam.cellsize.x + hparam.samplespace; x<hparam.cellsize.x*(NX - 1)*0.1- 0.5f*hparam.samplespace && i<initfluidparticle; x += hparam.samplespace)
+  		for (float x = hparam.cellsize.x + hparam.samplespace; x<hparam.cellsize.x*(NX - 1)*0.3- 0.5f*hparam.samplespace && i<initfluidparticle; x += hparam.samplespace)
 		{
 		
 				hparpos[i] = make_float3(x, y, z);
@@ -553,6 +553,20 @@ void cspray::markgrid_bubble()
 	markBoundaryCell << <gsblocknum, threadnum >> >(mmark);
 }
 
+void cspray::markgrid_initlbm()
+{
+	int fluidParCntPerGridThres = 10;
+	markfluid_LBM_Init << <pblocknum, threadnum >> > (mmark, parmass, parflag, parNumNow, gridstart, gridend, fluidParCntPerGridThres);
+	cudaThreadSynchronize();
+	getLastCudaError("Kernel execution failed");
+
+	//	markSolid_sphere << <gsblocknum, threadnum >> >(solidInitPos, sphereradius, mmark);
+	//	cudaThreadSynchronize();
+	//	getLastCudaError("Kernel execution failed");
+
+	markBoundaryCell << <gsblocknum, threadnum >> > (mmark);
+}
+
 void cspray::markgrid_lbm()
 {
 	int fluidParCntPerGridThres = 10;
@@ -608,7 +622,7 @@ void cspray::setGridColor()
 
 void cspray::sweepPhi(farray phi, char typeflag)
 {
-	initphi << <gsblocknum, threadnum >> >(phi, mmark, typeflag);//Á£×Óphi -0.5 ÆäËû3*NX
+	initphi << <gsblocknum, threadnum >> >(phi, mmark, typeflag);//grid phi -0.5 ÆäËû3*NX
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed");
 
@@ -658,12 +672,13 @@ void cspray::hashAndSortParticles()
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed");
 
-	sortParticles(gridHash, gridIndex, parNumNow);
+                                                    // after sort: gridindex 1 2 3 4 5
+	sortParticles(gridHash, gridIndex, parNumNow);  //          par index * * * * * 
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed");
 
 	//ÐèÒªÁíÒ»×éÊý¾ÝÀ´»º´æ
-	swapParticlePointers();
+	swapParticlePointers(); // parvalue <===>tmp par value
 
 	uint smemSize = sizeof(uint)*(threadnum + 1);
 	(cudaMemset(gridstart, CELL_UNDEF, hparam.gnum*sizeof(uint)));

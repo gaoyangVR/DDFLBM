@@ -1,6 +1,11 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 #include<vector_types.h>
+//#include"platform.h"
+#include <assert.h>
+
+/// \brief floating-point data type used in the simulations
+typedef float real;
 
 // #define NX 24
 // #define NY 24
@@ -10,6 +15,7 @@
 #define M_PI       3.14159265358979323846
 const float DEGtoRAD = 3.1415926f / 180.0f;
 
+
 #define TYPEFLUID 0
 #define TYPEAIR 1
 #define TYPEBOUNDARY 2
@@ -17,13 +23,15 @@ const float DEGtoRAD = 3.1415926f / 180.0f;
 #define TYPEAIRSOLO 4
 #define TYPESOLID 5
 #define TYPECNT 6
+//**************LBM************
+#define TYPESURFACE 7 // for LBM surface grid
 
 typedef unsigned int uint;
 #define CELL_UNDEF 0xffffffff
 #define  NTHREADS 32
 #define UNDEF_TEMPERATURE -10000.0f
 
-struct FlipConstant{
+struct FlipConstant {
 	int gnum;
 	int3 gvnum;
 	float samplespace;
@@ -40,18 +48,9 @@ struct FlipConstant{
 	int triHashCells;			//预留的hash数组大小，程序执行过程中不再变化
 	//for SPH-like part
 	float poly6kern, spikykern, lapkern;
-
-	//***************************LBM*****************************
-	float Pr, Ra, R;
-	float T0;
-	float p0;
-	float tau_f, tau_h;
-	float niu;
-	float cv;
-	float wf, wh;
-	float total_E, T_heat;
-	//****************************************************************
 };
+
+
 
 //创建一个方便转换1维与3维数组的数据结构
 struct farray{
@@ -336,47 +335,102 @@ float3 matRow(matrix3x3 m, int i);
 float3 matCol(matrix3x3 m, int i);
 matrix3x3 polarDecomposition(matrix3x3 mat, matrix3x3 R, matrix3x3 U, matrix3x3 D);
 
-//*********************LBM parameters*******************
-//struct LBMConstant {
-//	int gnum;
-//	int3 gvnum;
-//	float samplespace;
-//	float dt;
-//	float3 gravity;
-//	float3 gmin, gmax, cellsize;
-//	float m0;
-//	float waterrho;//	float solidrho;
-//	float Pr, Ra, R;
-//	float T0;
-//	float p0;
-//	float tau_f, tau_h;
-//	float niu;
-//	float cv;
-//	float wf, wh;
-//	float total_E, T_heat;
-//// 	float pradius;
-//// 	float3	triHashSize, triHashRes;		//triHashSize是HASH网格的大小;  triHashRes是每一个维度上有几个HASH网格,程序执行过程中不再变化
-//// 	float3 t_min, t_max;
-//// 	int triHashCells;			//预留的hash数组大小，程序执行过程中不再变化
-//};
-//********************************init LBM parameters****************************
-//delta_T = 0.1;
-//Pr = 0.7;
-//Ra = 10000;
-//RHO = 0.2;
-//U = 0.20;
-//R = 8.3144;	//气体普适常量
-//T0 = 0.04;
-//p0 = RHO * R *T0;
-//tau_f = 0.50;	//????存疑
-//tau_h = tau_f / Pr;
-//niu = tau_f * p0;
-//cv = (3 + 3)*R / 2.0;
-//frame = 0;
-//wf = 2 * delta_T / (2 * tau_f + delta_T);
-//wh = 2 * delta_T / (2 * tau_h + delta_T);
-//total_E = 0.0;
-//T_heat = 200;
+//*********************LBM_common.h**********************************************
+//*******************************************************************************
+
+
+
+static const real rhoA = 1;								//!< atmospheric pressure
+
+static const real v_max = (real)0.816496580927726;		//!< set maximum velocity to sqrt(2/3), such that f_eq[0] >= 0
+
+struct LBMConstrant {
+	//***************************LBM constrant*****************************
+	float Pr, Ra, R;
+	float T0;
+	float p0;
+	float tau_f, tau_h;
+	float niu;
+	float cv;
+	float wf, wh;
+	float total_E, T_heat;
+	//****************************************************************
+};														
+														//*****************************************
+///
+/// \brief Bit masks for the various cell types and neighborhood flags
+///
+enum LBMcellType
+{
+	CT_OBSTACLE = 1 << 0,
+	CT_FLUID = 1 << 1,
+	CT_INTERFACE = 1 << 2,
+	CT_EMPTY = 1 << 3,
+	// neighborhood flags, OR'ed with actual cell type
+	CT_NO_FLUID_NEIGH = 1 << 4,
+	CT_NO_EMPTY_NEIGH = 1 << 5,
+	CT_NO_IFACE_NEIGH = 1 << 6,
+	// changing the maximum value here requires adapting the temporary cell types in 'UpdateTypesLBMStep(...)'
+};
+
+static inline real CalculateMassExchange(const int type, const int type_neigh, const real fi_neigh, const real fi_inv);
+
+//_______________________________________________________________________________________________________________________
+///
+/// \brief Calculate mass exchange such that undesired interface cells to fill or empty
+///
+
+static inline real CalculateMassExchange(const int type, const int type_neigh, const real fi_neigh, const real fi_inv)
+{
+	// Table 4.1 in Nils Thuerey's PhD thesis
+
+	if (type & CT_NO_FLUID_NEIGH)
+	{
+		assert((type & CT_NO_EMPTY_NEIGH) == 0);
+
+		if (type_neigh & CT_NO_FLUID_NEIGH)
+		{
+			return fi_neigh - fi_inv;
+		}
+		else
+		{
+			// neighbor is standard cell or CT_NO_EMPTY_NEIGH
+			return -fi_inv;
+		}
+	}
+	else if (type & CT_NO_EMPTY_NEIGH)
+	{
+		if (type_neigh & CT_NO_EMPTY_NEIGH)
+		{
+			return fi_neigh - fi_inv;
+		}
+		else
+		{
+			// neighbor is standard cell or CT_NO_FLUID_NEIGH
+			return fi_neigh;
+		}
+	}
+	else
+	{
+		// current cell is standard cell
+
+		if (type_neigh & CT_NO_FLUID_NEIGH)
+		{
+			return fi_neigh;
+		}
+		else if (type_neigh & CT_NO_EMPTY_NEIGH)
+		{
+			return -fi_inv;
+		}
+		else
+		{
+			// neighbor is standard cell
+			return fi_neigh - fi_inv;
+		}
+	}
+}
+
+
 //********************************************************************************
 //******************************************************
 
