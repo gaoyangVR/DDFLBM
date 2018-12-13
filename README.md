@@ -1,2 +1,1 @@
-# DDFLBM
-GPU based DDFLBM
+
