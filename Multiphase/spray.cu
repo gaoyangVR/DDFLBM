@@ -39,6 +39,7 @@ inline int getidx9(int i, int j)
 void cspray::initmem_bubble()
 {
 	copyparamtoGPU(hparam);
+	
 	copyNXNYNZtoGPU(NX, NY, NZ);
 
 	//press
@@ -3792,10 +3793,11 @@ void cspray::LBMinitmemset()
 {
 
 	copyparamtoGPU(hparam);
+	copyLBMparamtoGPU(LBM_hparam);
 	copyNXNYNZtoGPU(NX, NY, NZ);
 	
 	int gsmemsize = sizeof(float)*hparam.gnum;//grid number
-	
+
 	 //press
 
 	cudaMalloc((void**)&mpress.data, gsmemsize);
@@ -3861,6 +3863,8 @@ void cspray::LBMinitmemset()
 	soliduy.setdim(NX, NY + 1, NZ);
 	cudaMalloc((void**)&soliduz.data, gvzmemsize);
 	soliduz.setdim(NX, NY, NZ + 1);
+
+//	cudaMalloc((void**)&vel_i);
 
 	cudaMemset(waterux.data, 0, gvxmemsize);
 	cudaMemset(wateruy.data, 0, gvymemsize);
@@ -3981,33 +3985,70 @@ void cspray::LBMinitmemset()
 	hgridend = new uint[hparam.gnum];
 	
 	//******************************LBM******************************
-	int Qgsmemsize = gsmemsize*Qm;
+	int Qgsmemsize = gsmemsize*19;
 	//malloc memory on host
-	h_f = (float *)malloc(Qgsmemsize);
-	h_h = (float *)malloc(Qgsmemsize);
+	//checkCudaErrors(cudaMalloc((void **)&LBMwateru, gsmemsize*3));
+	//checkCudaErrors(cudaMalloc((void **)&old_LBMwateru, gsmemsize));
+	cudaMalloc((void**)&f0, Qgsmemsize);
+	f0.setdim(NX, NY, NZ, 19);
+	cudaMalloc((void**)&h0, Qgsmemsize);
+	h0.setdim(NX, NY, NZ, 19);
 
-	h_E = (float *)malloc(gsmemsize);
-	h_rho = (float *)malloc(gsmemsize);
-	h_T = (float *)malloc(gsmemsize);
+	checkCudaErrors(cudaMalloc((void **)&df, Qgsmemsize));			//device q & h
+	checkCudaErrors(cudaMalloc((void **)&dh, Qgsmemsize));
+	checkCudaErrors(cudaMalloc((void **)&old_df, Qgsmemsize));
+	checkCudaErrors(cudaMalloc((void **)&old_dh, Qgsmemsize));
+	checkCudaErrors(cudaMalloc((void **)&dF, Qgsmemsize));
+	checkCudaErrors(cudaMalloc((void **)&dH, Qgsmemsize));
+
+	cudaMalloc((void**)&dgmass, gsmemsize);
+	cudaMalloc((void **)&dE, gsmemsize);
+	cudaMalloc((void **)&dT, gsmemsize);
 	
-	//malloc memory on device
-
-	checkCudaErrors(cudaMalloc((void **)&d_f, Qgsmemsize));			//device q & h
-	checkCudaErrors(cudaMalloc((void **)&d_h, Qgsmemsize));
-	//checkCudaErrors(cudaMalloc((void **)&d_tmpf, mem_size));
-	//checkCudaErrors(cudaMalloc((void **)&d_tmph, mem_size));
-	checkCudaErrors(cudaMalloc((void **)&d_F, Qgsmemsize));
-	checkCudaErrors(cudaMalloc((void **)&d_H, Qgsmemsize));
-
-	cudaMalloc((void **)&d_E, gsmemsize);
-	cudaMalloc((void **)&d_T, gsmemsize);
-	cudaMalloc((void **)&d_rho, gsmemsize);
+	cudaMalloc((void **)&drho.data, gsmemsize);
+	drho.setdim(NX, NY, NZ);
+//	cudaMemset(drho.data, 1., gsmemsize);//初始的LBM密度rho，在这设置不太合理
+	
   //*********************************************************************
 	
 }
 
-void cspray::LBMCollision()
+void cspray::LBMevolution()
+{
+	LBMCollision();
+	printf("");
+
+	LBMStream();
+
+	UpdateLBMStep();//need or not? 1213
+
+}
+void cspray::initLBMfield()
 {
 	
-	};
+	initLBMfield_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);//初始化f[19]
+	driveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);//得到宏观量 u rho
+	initLBMmass_k << < gsblocknum, threadnum >> > (mmark, dgmass, drho);//初始化网格质量 
+	cudaThreadSynchronize();
+	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
+	
+
+}
+void cspray::LBMCollision()
+{
+	CalcLBMeq << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);
+	cudaThreadSynchronize();
+	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
+
+}
+void cspray::LBMStream()
+{
+
+};
+
+void cspray::UpdateLBMStep()
+{
+
+}
+
 //*************************************************************************************

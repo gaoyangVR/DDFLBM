@@ -3,6 +3,7 @@
 #include<vector_types.h>
 //#include"platform.h"
 #include <assert.h>
+#include<string.h>
 
 /// \brief floating-point data type used in the simulations
 typedef float real;
@@ -56,12 +57,17 @@ struct FlipConstant {
 struct farray{
 	float* data;
 	int xn, yn, zn;
+	int Qm;
 	farray();
 	void setdim(int _xn, int _yn, int _zn){ xn = _xn, yn = _yn, zn = _zn; }
-
+	void setdim(int _xn, int _yn, int _zn, int _Qm) { xn = _xn, yn = _yn, zn = _zn, Qm = _Qm; }// 为Qm个方向设置重载
 	__host__ __device__ inline float &operator ()(int i, int j, int k)
 	{
 		return data[i*yn*zn + j*zn + k];
+	}
+	__host__ __device__ inline float &operator ()(int i, int j, int k, int q)
+	{
+		return data[i*yn*zn*19 + j*zn*19 + k*19+q];
 	}
 	__host__ __device__ inline float &operator ()(int i)
 	{
@@ -338,22 +344,21 @@ matrix3x3 polarDecomposition(matrix3x3 mat, matrix3x3 R, matrix3x3 U, matrix3x3 
 //*********************LBM_common.h**********************************************
 //*******************************************************************************
 
-
-
-static const real rhoA = 1;								//!< atmospheric pressure
-
-static const real v_max = (real)0.816496580927726;		//!< set maximum velocity to sqrt(2/3), such that f_eq[0] >= 0
-
-struct LBMConstrant {
-	//***************************LBM constrant*****************************
+struct LBMConstant {
+	//***************************LBM constant*****************************
 	float Pr, Ra, R;
-	float T0;
+	float LBM_T0;
 	float p0;
 	float tau_f, tau_h;
 	float niu;
 	float cv;
 	float wf, wh;
 	float total_E, T_heat;
+	float RHO;
+	int3 vel_i[19];
+	int invVel_i[19];
+	float omega[19];
+	float delta_T;
 	//****************************************************************
 };														
 														//*****************************************

@@ -7,6 +7,8 @@
 
 __constant__ FlipConstant dparam;
 
+__constant__ LBMConstant LBM_dparam;
+
 __constant__ int NX;
 __constant__ int NY;
 __constant__ int NZ;
@@ -22,12 +24,81 @@ __device__ float wacc = 0.;
 __device__ float3 pacc;
 __device__ float sradiusInv;
 
+__constant__ float v_max = (float)0.816496580927726;		//!< set maximum velocity to sqrt(2/3), such that f_eq[0] >= 0
+
+//**********************************LBM*****************************************
+__host__ __device__ float LBMfeq(float3 u, float omega, float rho, int3 vel_i ,float RT0)//vel_i==e[qm][3]
+{
+	float feq;
+	float3 vel;
+	vel.x = (float)vel_i.x, vel.y = (float)vel_i.y; vel.z = (float)vel_i.z;
+	feq = omega * rho * (1.0 + dot(u, vel) / RT0 + 0.5*dot(u, vel*dot(u, vel) / RT0 / RT0 - dot(u,u) / (2 * RT0))); 
+	return feq;
+
+}
+__device__ inline float Vec3_Norm(const float3 v)
+{
+	// have to change to 'fabs' for 'typedef double real'
+	float a = fabsf(v.x);
+	float b = fabsf(v.y);
+	float c = fabsf(v.z);
+
+	if (a < b)
+	{
+		if (b < c)
+		{
+			return c*sqrtf(1 +pow(a/c,2) + pow(b/c,2));
+		}
+		else	// a < b, c <= b
+		{
+			return b*sqrtf(1 + pow(a/b,2) + pow(c/b,2));
+		}
+	}
+	else	// b <= a
+	{
+		if (a < c)
+		{
+			return c*sqrtf(1 + pow(a / c,2) + pow(b / c,2));
+		}
+		else	// b <= a, c <= a
+		{
+			if (a != 0)
+			{
+				return a*sqrtf(1 + pow(b / a,2) + pow(c / a,2));
+			}
+			else
+			{
+				return 0;
+			}
+		}
+	}
+}
+
+
+__host__ __device__ float LBMheq(float3 u, float omega, float rho, int3 vel_i, float T,float RT0)//vel_i==e[qm][3]
+{
+	float feq,heq,E;
+	float3 vel;
+	float  cv, p0;
+	vel.x = (float)vel_i.x, vel.y = (float)vel_i.y; vel.z = (float)vel_i.z;
+	E = cv*T + dot(u, u) / 2.0;
+	feq = omega * rho * (1.0 + dot(u, vel) / RT0 + 0.5*dot(u, vel*dot(u, vel) / RT0 / RT0 - dot(u, u) / (2 * RT0)));
+	heq = omega * p0 * (dot(vel, u) / RT0 + dot(vel, u)*dot(vel, u) / RT0 / RT0 - dot(u, u) / RT0 + 0.5*(dot(vel, vel) / RT0 - 3.0)) + E*feq;
+	return feq;
+}
+//*********************************LBM****************************************
 
 void copyparamtoGPU(FlipConstant hparam)
 {
 	
 	checkCudaErrors(cudaMemcpyToSymbol(dparam, &hparam, sizeof(FlipConstant)));
 }
+//***********************************************************************
+void copyLBMparamtoGPU(LBMConstant hparam)
+{
+	checkCudaErrors(cudaMemcpyToSymbol(LBM_dparam, &hparam, sizeof(LBMConstant)));
+}
+//************************************************************
 void LBMcopyparamtoGPU(FlipConstant hparam)
 {
 
@@ -563,7 +634,7 @@ __global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, 
 			}
 		}
 
-		if (cntfluidsolid == 0 && cntair == 0)
+		if (cntfluidsolid == 0 )
 			mark[idx] = TYPEVACUUM;
 		else if (cntfluidsolid >= 8)  // initial particle number per cell is 8
 			mark[idx] = TYPEFLUID;
@@ -5779,37 +5850,103 @@ __global__ void set_softparticle_position(float3* solidParPos, float3* mParPos, 
 	}
 };
 //****************************************LBM algorithm*****************************
-
-__host__ __device__ inline float feq(int i, int j, int k, int a, float R, float T0, float p0, float cv, float *ux, float *uy, float *uz, float *rho, float *T, float *E)
+__global__ void initLBMfield_k(farray ux, farray uy,farray uz, charray mark, farray f0, farray rho0)
 {
-	float feq, RT0, eu, u2;
-	RT0 = R*T0;
-	const int Qm = 19;
-	int e[Qm][3] = { { 0, 0, 0 },{ 1, 0, 0 },{ -1, 0, 0 },{ 0, 1, 0 },{ 0, -1, 0 },{ 0, 0, 1 },{ 0, 0, -1 },{ 1, 1, 0 },{ -1, -1, 0 },{ 1, -1, 0 },{ -1, 1, 0 },{ 1, 0, 1 },{ -1, 0, -1 },{ 1, 0, -1 },{ -1, 0, 1 },{ 0, 1, 1 },{ 0, -1, -1 },{ 0, 1, -1 },{ 0, -1, 1 } };
-	float w[Qm] = { 1 / 3.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0 };
-
-	u2 = ux[getidx(i, j, k)] * ux[getidx(i, j, k)] + uy[getidx(i, j, k)] * uy[getidx(i, j, k)] + uz[getidx(i, j, k)] * uz[getidx(i, j, k)];
-	eu = e[a][0] * ux[getidx(i, j, k)] + e[a][1] * uy[getidx(i, j, k)] + e[a][2] * uz[getidx(i, j, k)];
-	feq = w[a] * rho[getidx(i, j, k)] * (1.0 + eu / RT0 + 0.5*eu*eu / RT0 / RT0 - u2 / 2 / RT0); //总能分布
-	return feq;
-
-
-}
-__host__ __device__ inline float heq(int i, int j, int k, int a, float R, float T0, float p0, float cv, float *ux, float *uy, float *uz, float *rho, float *T, float *E)
-{
-	float  RT0, eu, e2, u2, heq, feq;
-	RT0 = R*T0;
-	const int Qm = 19;
-	int e[Qm][3] = { { 0, 0, 0 },{ 1, 0, 0 },{ -1, 0, 0 },{ 0, 1, 0 },{ 0, -1, 0 },{ 0, 0, 1 },{ 0, 0, -1 },{ 1, 1, 0 },{ -1, -1, 0 },{ 1, -1, 0 },{ -1, 1, 0 },{ 1, 0, 1 },{ -1, 0, -1 },{ 1, 0, -1 },{ -1, 0, 1 },{ 0, 1, 01 },{ 0, -1, -1 },{ 0, 1, -1 },{ 0, -1, 1 } };
-	float w[Qm] = { 1 / 3.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 18.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0, 1 / 36.0 };
-	e2 = e[a][0] * e[a][0] + e[a][1] * e[a][1] + e[a][2] * e[a][2];
-	u2 = ux[getidx(i, j, k)] * ux[getidx(i, j, k)] + uy[getidx(i, j, k)] * uy[getidx(i, j, k)] + uz[getidx(i, j, k)] * uz[getidx(i, j, k)];
-	eu = e[a][0] * ux[getidx(i, j, k)] + e[a][1] * uy[getidx(i, j, k)] + e[a][2] * uz[getidx(i, j, k)];
-	E[getidx(i, j, k)] = cv*T[getidx(i, j, k)] + u2 / 2.0;
-	feq = w[a] * rho[getidx(i, j, k)] * (1.0 + eu / RT0 + 0.5*eu*eu / RT0 / RT0 - u2 / 2 / RT0); //总能分布
-	heq = w[a] * p0 * (eu / RT0 + eu*eu / RT0 / RT0 - u2 / RT0 + 0.5*(e2 / RT0 - 3.0)) + E[getidx(i, j, k)] * feq;//总能形式
-	return heq;
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	//for(int idx=0;idx<dparam.gnum;idx++)
+	{
+		int i, j, k;
+		getijk(i, j, k, idx);
+		if (mark[idx] ==TYPEBOUNDARY || mark[idx]==TYPEVACUUM )
+		{
+			rho0.data[idx] = 0.;
+		}
+		else rho0.data[idx] = 1;
+		
+		for(int Qm = 0; Qm < 19; Qm++)
+		{
+			f0(i,j,k,Qm) = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
+				LBM_dparam.omega[Qm], rho0(idx),
+				make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
+				LBM_dparam.R*LBM_dparam.LBM_T0);
+		//	if(f0(i, j, k, Qm))printf("(%d,%d,%d,%d)-%f\n", i, j, k, Qm, f0(i, j, k, Qm));
+		}
+	}
 }
 
+__global__ void driveLBMquantities_k(farray ux, farray uy, farray uz, charray mark, farray f, farray rho)
+{
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	{// calculate average density
+		if (mark[idx] == TYPEVACUUM || mark[idx] == TYPEBOUNDARY)
+	    return;
+		
+		rho.data[idx] = 0; 
+		int i;
+		for ( i= 0; i < 19; i++)
+		{
+			rho.data[idx] += f[i];
+		}
+		// calculate average velocity u
+		ux.data[idx] = 0;
+		uy.data[idx] = 0;
+		uz.data[idx] = 0;
+		if (rho.data[idx] > 0)
+		{
+			for (i = 0; i < 19; i++)
+			{
+				ux.data[idx] += f[i] * LBM_dparam.vel_i[i].x;
+				uy.data[idx] += f[i] * LBM_dparam.vel_i[i].y;
+				uz.data[idx] += f[i] * LBM_dparam.vel_i[i].z;
+			}
+			float s = 1 / rho.data[idx];
+			ux.data[idx] *= s;
+			uy.data[idx] *= s;
+			uz.data[idx] *= s;
+		}
+		// rescale in case maximum velocity is exceeded
+		float n = Vec3_Norm(make_float3(ux(idx), uy(idx), uz(idx)));
+		if (n > v_max)
+		{
+			ux.data[idx] *= v_max / n;
+			uy.data[idx] *= v_max / n;
+			uz.data[idx] *= v_max / n;
+		}
+	}
 
-//***********************************************************************************
+}
+
+__global__ void CalcLBMeq(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0)
+{
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+		//for(int idx=0;idx<dparam.gnum;idx++)
+	{
+		if (mark[idx] == TYPEBOUNDARY || mark[idx] == TYPEVACUUM)
+			return;
+		else
+		{
+
+
+		}
+	}
+}
+
+__global__ void initLBMmass_k(charray mark, float* dgmass, farray rho)
+{
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	{
+		if (mark[idx] == TYPEFLUID)
+			dgmass[idx] = rho[idx];
+		else if (mark[idx] == TYPESURFACE)
+			dgmass[idx] = rho[idx] * 0.5;
+		else
+			dgmass[idx] = 0;
+	}
+}
+
+
+//***********************************************************************************/

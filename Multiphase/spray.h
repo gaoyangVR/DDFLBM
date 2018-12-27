@@ -15,9 +15,8 @@ const int NX=32,NY=16,NZ=16;
 //const int NX=48,NY=32,NZ=64;  //interaction
 //const int NX=64,NY=48,NZ=64; //boiling / melting
 
-//LBM
-const int Qm = 19;
 
+//
 class cspray
 {
 public:
@@ -412,19 +411,31 @@ public:
 	//brief Distribution functions for D3Q19
 //*******************************************************************************
 	public:
-		float *d_f, *d_h;
-		float *d_F, *d_H; 
-		float *d_tmpf, *d_tmph; //device values
-		float *h_f, *h_h;		//host values
+		//float *d_f, *d_h;
+		//float *d_F, *d_H; 
+		//float *d_tmpf, *d_tmph; //device values
+		bool m_bLBMinit;
+		farray f0, h0, hrho, drho;
+		farray h_f, h_h;		//host values
+		float *dgmass;   //直接定义为指针
 
-		
+		float *df;
+		float *dh;
+		float *dF;
+		float *dH;
+		float water_rho;
+
+		float *old_df;
+		float *old_dh;
+		float3 *LBMwateru;
+		float3 *old_LBMwateru;
 
 		//float *d_vx, *d_vy, *d_vz, *d_vxold, *d_vyold, *d_vzold;
 		//float3 *hvel   和FLIP共用就行
-		float3 *htmpvel;
+		float3 *LBMtmpvel;
 		//float *h_vx, *h_vy, *h_vz, *h_vxold, *h_vyold, *h_vzold;
 
-		float *h_rho, *d_rho, *h_E, *d_E, *h_T, *d_T;
+		float  *hE, *dE, *hT, *dT;
 
 //public:
 //	int Re;		//雷诺数
@@ -445,14 +456,14 @@ public:
 //	float total_E;
 //	float wf, wh;
 
-public:
-	float omega1, omega2, omega3;
-	float e[Qm][3];
+
 
 	//float gridx, gridy, gridz;
 
 	void LBMwatersim();
 	void LBMCollision();
+	void LBMStream();
+	void UpdateLBMStep();
 	void markgrid_lbm();
 	void markgrid_initlbm();
 	void LBMevolution();
@@ -468,11 +479,13 @@ public:
 //	void rollrendermode();
 //	void solidmotion();
 
+	void initLBMfield();
 	void LBMinitmemset();
 	void LBMinitparam();
+	//void LBMeq();
 	//void initsim();
 	//void initLBM();
-	LBMConstrant LBM_hparam;
+	LBMConstant LBM_hparam;
 };
 
 #endif

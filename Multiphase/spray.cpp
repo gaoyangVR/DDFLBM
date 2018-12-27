@@ -610,24 +610,57 @@ void cspray::initparam()
 	renderpartiletype = TYPEAIR;
 
 	//*****************init LBM constant parameters***********************
-// 	LBMhparam.Pr = 0.7;
-// 	LBMhparam.Ra = 10000;
-// 	//hparam.U = 0.20;
-// 	LBMhparam.R = 8.3144;	//气体普适常量
-// 	LBMhparam.T0 = 0.04;
-// 	hparam.p0 = RHO * R *T0;
-// 	hparam.tau_f = 0.50;	//????存疑
-// 	hparam.tau_h = tau_f / Pr;
-// 	hparam.niu = tau_f * p0;
-// 	hparam.cv = (3 + 3)*R / 2.0;
-// 	hparam.wf = 2 * delta_T / (2 * tau_f + delta_T);
-// 	hparam.wh = 2 * delta_T / (2 * tau_h + delta_T);
-// 	hparam.total_E = 0.0;
-// 	hparam.T_heat = 200;
-	//*******************************************
-	
+	if (mscene == SCENE_LBMWATER)
+	{
+		
+		m_bLBMinit = false;
 
+		LBM_hparam.delta_T = 0.001;
+		LBM_hparam.Pr = 0.7;
+		LBM_hparam.RHO = 0.5;
+		LBM_hparam.Ra = 10000;
+		LBM_hparam.R = 8.3144;	//气体普适常量
+		LBM_hparam.LBM_T0 = 0.04;
+		LBM_hparam.p0 = LBM_hparam.RHO * LBM_hparam.R *LBM_hparam.LBM_T0;
+		LBM_hparam.tau_f = 0.50;	//????存疑
+		LBM_hparam.tau_h = LBM_hparam.tau_f / LBM_hparam.Pr;
+		LBM_hparam.niu = LBM_hparam.tau_f * LBM_hparam.p0;
+		LBM_hparam.cv = (3 + 3)*LBM_hparam.R / 2.0;
+		LBM_hparam.wf = 2 * LBM_hparam.delta_T / (2 * LBM_hparam.tau_f + LBM_hparam.delta_T);
+		LBM_hparam.wh = 2 * LBM_hparam.delta_T / (2 * LBM_hparam.tau_h + LBM_hparam.delta_T);
+
+		int3 tmp_vel_i[19] = { { 0, 0, 0 },		// zero direction
+		{ -1, 0, 0 },		// 6 directions with velocity 1
+		{ 1, 0, 0 },
+		{ 0, -1, 0 },
+		{ 0, 1, 0 },
+		{ 0, 0, -1 },
+		{ 0, 0, 1 },
+		{ -1, -1, 0 },		// 12 directions with velocity sqrt(2)
+		{ -1, 1, 0 },
+		{ 1, -1, 0 },
+		{ 1, 1, 0 },
+		{ 0, -1, -1 },
+		{ 0, -1, 1 },
+		{ 0, 1, -1 },
+		{ 0, 1, 1 },
+		{ -1, 0, -1 },
+		{ -1, 0, 1 },
+		{ 1, 0, -1 },
+		{ 1, 0, 1 } };
+		int tmpinvVel[19]= { 0, 2, 1, 4, 3, 6, 5, 10, 9, 8, 7, 14, 13, 12, 11, 18, 17, 16, 15 };
+		float tmpomega[19] = { 1. / 3,
+			1. / 18, 1. / 18, 1. / 18, 1. / 18, 1. / 18, 1. / 18,
+			1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36 };
+		memcpy(LBM_hparam.vel_i, tmp_vel_i, sizeof(int3) * 19);
+		memcpy(LBM_hparam.invVel_i, tmpinvVel, sizeof(int)*19);
+		memcpy(LBM_hparam.omega, tmpomega, sizeof(float) * 19);
+		
+		
+	}
+ 	//*******************************************
 }
+
 
 void cspray::init()
 {	
@@ -1006,7 +1039,7 @@ void cspray::bubblesim()////////////////////////////mainbody
 		//temp
 		// 		if( mscene==SCENE_MELTANDBOIL && mframe==1 )
 		// 			bRunMCSolid = true;
-		if (mscene == SCENE_ALL & mframe == 0)
+		if (mscene == SCENE_ALL && mframe == 0)
 		{
 			m_bFixSolid=false;
 			m_bAddHeatBottom = false;
@@ -1271,13 +1304,18 @@ void cspray:: LBMwatersim()//LBM prpcess  Note：common FLIP， not multiFLIP
 		
 		mapvelp2g();
 		printTime(m_btimer, "mapvelp2g", time2);
-		////////////////
 		
 		setWaterBoundaryU(waterux, wateruy, wateruz);
 		printTime(m_btimer, "sweepU", time2);
-
+		////////////
+		if (!m_bLBMinit)
+		{
+			initLBMfield();
+			m_bLBMinit = true;
+		}
+		//LBMevolution();
 		project_CG(waterux, wateruy, wateruz);
-		printTime(m_btimer, "project_CG_bubble", time2);
+		//printTime(m_btimer, "project_CG_bubble", time2);
 	
 		setWaterBoundaryU(waterux, wateruy, wateruz);
 		printTime(m_btimer, "sweepU", time2);
@@ -1795,4 +1833,9 @@ void cspray::initBottomParticles_terrain(int3 mincell, int3 maxcell, float heigh
 	delete[] hparvel;
 	delete[] hparmass;
 	delete[] hparflag;
+}
+
+float cspray::u2()
+{
+	return 0.0f;
 }

@@ -224,6 +224,11 @@ __global__ void calcDensPressSPH_SLCouple(float3* ppos, float *pdens, float *ppr
 __global__ void enforceForceSPH_SLCouple(float3 *ppos, float3 *pvel, float *pdens, float *ppress, char *pflag, int pnum, uint *gridstart, uint *gridend, float viscositySPH);
 
 
-// for LBM algorithm
+//************************************ for LBM algorithm**************************************************
  __global__ void markfluid_LBMdense(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres);
  __global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres);
+ void copyLBMparamtoGPU(LBMConstant hparam);
+ __global__ void initLBMfield_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
+ __global__ void driveLBMquantities_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
+ __global__ void CalcLBMeq(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
+ __global__ void initLBMmass_k(charray mark, float *dgmass, farray rho);
