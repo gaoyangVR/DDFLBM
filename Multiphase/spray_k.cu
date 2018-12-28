@@ -5866,6 +5866,7 @@ __global__ void initLBMfield_k(farray ux, farray uy,farray uz, charray mark, far
 		
 		for(int Qm = 0; Qm < 19; Qm++)
 		{
+			
 			f0(i,j,k,Qm) = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
 				LBM_dparam.omega[Qm], rho0(idx),
 				make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
@@ -5880,8 +5881,8 @@ __global__ void driveLBMquantities_k(farray ux, farray uy, farray uz, charray ma
 	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
 	{// calculate average density
-		if (mark[idx] == TYPEVACUUM || mark[idx] == TYPEBOUNDARY)
-	    return;
+		//if (mark[idx] == TYPEVACUUM || mark[idx] == TYPEBOUNDARY)
+	 //   return;
 		
 		rho.data[idx] = 0; 
 		int i;
@@ -5918,17 +5919,28 @@ __global__ void driveLBMquantities_k(farray ux, farray uy, farray uz, charray ma
 
 }
 
-__global__ void CalcLBMeq(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0)
+__global__ void CalcLBMcollision(farray ux, farray uy, farray uz, charray mark, farray df, farray dF, farray rho)
 {
 	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
-		//for(int idx=0;idx<dparam.gnum;idx++)
 	{
+		int i, j, k;
+		getijk(i, j, k, idx);
 		if (mark[idx] == TYPEBOUNDARY || mark[idx] == TYPEVACUUM)
 			return;
 		else
 		{
+			for(int Qm=0;Qm<19;Qm++)
+			{
+				float f_eq; // calculate equilibrium distribution function
+				f_eq = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
+				LBM_dparam.omega[Qm], rho(idx),
+				make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
+				LBM_dparam.R*LBM_dparam.LBM_T0);
 
+			
+				dF(i,j,k,Qm) = (1 - LBM_dparam.omega[Qm])*df(i, j, k, Qm) + LBM_dparam.omega[Qm] * f_eq;
+			}
 
 		}
 	}

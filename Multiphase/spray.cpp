@@ -1313,8 +1313,8 @@ void cspray:: LBMwatersim()//LBM prpcess  Note£ºcommon FLIP£¬ not multiFLIP
 			initLBMfield();
 			m_bLBMinit = true;
 		}
-		//LBMevolution();
-		project_CG(waterux, wateruy, wateruz);
+		LBMevolution();
+	//	project_CG(waterux, wateruy, wateruz);
 		//printTime(m_btimer, "project_CG_bubble", time2);
 	
 		setWaterBoundaryU(waterux, wateruy, wateruz);

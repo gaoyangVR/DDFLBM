@@ -419,9 +419,11 @@ public:
 		farray h_f, h_h;		//host values
 		float *dgmass;   //直接定义为指针
 
-		float *df;
+		farray df;
+		farray dF;
+
+	
 		float *dh;
-		float *dF;
 		float *dH;
 		float water_rho;
 

@@ -3989,10 +3989,14 @@ void cspray::LBMinitmemset()
 	//malloc memory on host
 	//checkCudaErrors(cudaMalloc((void **)&LBMwateru, gsmemsize*3));
 	//checkCudaErrors(cudaMalloc((void **)&old_LBMwateru, gsmemsize));
-	cudaMalloc((void**)&f0, Qgsmemsize);
-	f0.setdim(NX, NY, NZ, 19);
+
 	cudaMalloc((void**)&h0, Qgsmemsize);
 	h0.setdim(NX, NY, NZ, 19);
+
+	cudaMalloc((void**)&df, Qgsmemsize);
+	df.setdim(NX, NY, NZ, 19);
+	cudaMalloc((void**)&dF, Qgsmemsize);
+	dF.setdim(NX, NY, NZ, 19);
 
 	checkCudaErrors(cudaMalloc((void **)&df, Qgsmemsize));			//device q & h
 	checkCudaErrors(cudaMalloc((void **)&dh, Qgsmemsize));
@@ -4026,9 +4030,10 @@ void cspray::LBMevolution()
 void cspray::initLBMfield()
 {
 	
-	initLBMfield_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);//初始化f[19]
-	driveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);//得到宏观量 u rho
+	initLBMfield_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//初始化f[19]
+	driveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//得到宏观量 u rho
 	initLBMmass_k << < gsblocknum, threadnum >> > (mmark, dgmass, drho);//初始化网格质量 
+	
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
 	
@@ -4036,7 +4041,7 @@ void cspray::initLBMfield()
 }
 void cspray::LBMCollision()
 {
-	CalcLBMeq << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, f0, drho);
+	CalcLBMcollision << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df ,dF, drho);
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
 

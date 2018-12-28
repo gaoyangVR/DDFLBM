@@ -230,5 +230,5 @@ __global__ void enforceForceSPH_SLCouple(float3 *ppos, float3 *pvel, float *pden
  void copyLBMparamtoGPU(LBMConstant hparam);
  __global__ void initLBMfield_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
  __global__ void driveLBMquantities_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
- __global__ void CalcLBMeq(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
+ __global__ void CalcLBMcollision(farray waterux, farray wateruy, farray wateruz, charray mark, farray df,farray dF, farray rho0);
  __global__ void initLBMmass_k(charray mark, float *dgmass, farray rho);
