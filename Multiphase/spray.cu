@@ -556,7 +556,7 @@ void cspray::markgrid_bubble()
 
 void cspray::markgrid_initlbm()
 {
-	int fluidParCntPerGridThres = 10;
+	int fluidParCntPerGridThres = 8;
 	markfluid_LBM_Init << <pblocknum, threadnum >> > (mmark, parmass, parflag, parNumNow, gridstart, gridend, fluidParCntPerGridThres);
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed");
@@ -3874,32 +3874,38 @@ void cspray::LBMinitmemset()
 	cudaMemset(wateruz_old.data, 0, gvzmemsize);
 
 	//for air u
-	{
-		cudaMalloc((void**)&airux.data, gvxmemsize);
-		airux.setdim(NX + 1, NY, NZ);
-		cudaMalloc((void**)&airuy.data, gvymemsize);
-		airuy.setdim(NX, NY + 1, NZ);
-		cudaMalloc((void**)&airuz.data, gvzmemsize);
-		airuz.setdim(NX, NY, NZ + 1);
-
-		cudaMalloc((void**)&airux_old.data, gvxmemsize);
-		airux_old.setdim(NX + 1, NY, NZ);
-		cudaMalloc((void**)&airuy_old.data, gvymemsize);
-		airuy_old.setdim(NX, NY + 1, NZ);
-		cudaMalloc((void**)&airuz_old.data, gvzmemsize);
-		airuz_old.setdim(NX, NY, NZ + 1);
-
-		cudaMemset(airux.data, 0, gvxmemsize);
-		cudaMemset(airuy.data, 0, gvymemsize);
-		cudaMemset(airuz.data, 0, gvzmemsize);
-		cudaMemset(airux_old.data, 0, gvxmemsize);
-		cudaMemset(airuy_old.data, 0, gvymemsize);
-		cudaMemset(airuz_old.data, 0, gvzmemsize);
-	}
+// 	{
+// 		cudaMalloc((void**)&airux.data, gvxmemsize);
+// 		airux.setdim(NX + 1, NY, NZ);
+// 		cudaMalloc((void**)&airuy.data, gvymemsize);
+// 		airuy.setdim(NX, NY + 1, NZ);
+// 		cudaMalloc((void**)&airuz.data, gvzmemsize);
+// 		airuz.setdim(NX, NY, NZ + 1);
+// 
+// 		cudaMalloc((void**)&airux_old.data, gvxmemsize);
+// 		airux_old.setdim(NX + 1, NY, NZ);
+// 		cudaMalloc((void**)&airuy_old.data, gvymemsize);
+// 		airuy_old.setdim(NX, NY + 1, NZ);
+// 		cudaMalloc((void**)&airuz_old.data, gvzmemsize);
+// 		airuz_old.setdim(NX, NY, NZ + 1);
+// 
+// 		cudaMemset(airux.data, 0, gvxmemsize);
+// 		cudaMemset(airuy.data, 0, gvymemsize);
+// 		cudaMemset(airuz.data, 0, gvzmemsize);
+// 		cudaMemset(airux_old.data, 0, gvxmemsize);
+// 		cudaMemset(airuy_old.data, 0, gvymemsize);
+// 		cudaMemset(airuz_old.data, 0, gvzmemsize);
+// 	}
 
 	//mark
 	cudaMalloc((void**)&mmark, sizeof(char)*hparam.gnum);
-	cudaMalloc((void**)&mark_terrain, sizeof(char)*hparam.gnum);
+	mmark.setdim(NX, NY, NZ);
+	//cudaMalloc((void**)&mark_terrain, sizeof(char)*hparam.gnum);
+	cudaMalloc((void**)&oldmark, sizeof(char)*hparam.gnum);
+	oldmark.setdim(NX, NY, NZ);
+	//LBMnormal
+	cudaMalloc((void**)&oldnorm, sizeof(float3)*hparam.gnum);
+	
 
 	//particle
 	cudaMalloc((void**)&mParPos, parNumMax*sizeof(float3));
@@ -4005,12 +4011,14 @@ void cspray::LBMinitmemset()
 	checkCudaErrors(cudaMalloc((void **)&dF, Qgsmemsize));
 	checkCudaErrors(cudaMalloc((void **)&dH, Qgsmemsize));
 
-	cudaMalloc((void**)&dgmass, gsmemsize);
+	cudaMalloc((void**)&dmass, gsmemsize);
 	cudaMalloc((void **)&dE, gsmemsize);
 	cudaMalloc((void **)&dT, gsmemsize);
 	
 	cudaMalloc((void **)&drho.data, gsmemsize);
 	drho.setdim(NX, NY, NZ);
+	cudaMalloc((void **)&dtmprho.data, gsmemsize);
+	dtmprho.setdim(NX, NY, NZ);
 //	cudaMemset(drho.data, 1., gsmemsize);//初始的LBM密度rho，在这设置不太合理
 	
   //*********************************************************************
@@ -4020,10 +4028,10 @@ void cspray::LBMinitmemset()
 void cspray::LBMevolution()
 {
 	LBMCollision();
-	printf("");
+	printf("LBMCollision complete!\n");
 
 	LBMStream();
-
+	
 	UpdateLBMStep();//need or not? 1213
 
 }
@@ -4031,8 +4039,8 @@ void cspray::initLBMfield()
 {
 	
 	initLBMfield_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//初始化f[19]
-	driveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//得到宏观量 u rho
-	initLBMmass_k << < gsblocknum, threadnum >> > (mmark, dgmass, drho);//初始化网格质量 
+	deriveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//得到宏观量 u rho
+	initLBMmass_k << < gsblocknum, threadnum >> > (mmark, dmass, drho);//初始化网格质量 
 	
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
@@ -4041,19 +4049,31 @@ void cspray::initLBMfield()
 }
 void cspray::LBMCollision()
 {
-	CalcLBMcollision << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df ,dF, drho);
+	CalcLBMcollision_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df ,dF, drho);
 	cudaThreadSynchronize();
 	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
 
 }
 void cspray::LBMStream()
 {
+	LBMStream_k<< < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, dF, drho,dmass);
+	deriveLBMquantities_k << < gsblocknum, threadnum >> > (waterux, wateruy, wateruz, mmark, df, drho);//得到宏观量 u rho
+	LBMFluidmass2rho_k << < gsblocknum, threadnum >> > ( mmark, drho,dmass);//// for fluid cells, set density exactly to mass to avoid numerical drift
+	
 
 };
 
 void cspray::UpdateLBMStep()
 {
 
+	LBMUpdateType1_k << < gsblocknum, threadnum >> > (mmark,oldmark,oldnorm, df, dF, drho, dmass);
+	LBMUpdateType2_k << < gsblocknum, threadnum >> > (mmark,oldmark, df, dF, drho, dtmprho, dmass, waterux, wateruy, wateruz, tmpux, tmpuy, tmpuz);
+	LBMUpdateType3_k << < gsblocknum, threadnum >> > (mmark, df, dF, drho, dmass);
+	LBMUpdateType4_k << < gsblocknum, threadnum >> > (mmark, oldmark, oldnorm, df, dF, drho, dmass);
+	LBMUpdateType5_k << < gsblocknum, threadnum >> > (mmark, df, dF, drho, dmass);
+	LBMUpdateType6_k << < gsblocknum, threadnum >> > (mmark, df, dF, drho, dmass);
+	cudaThreadSynchronize();
+	getLastCudaError("Kernel execution failed gsblocknum, threadnum ");
 }
 
 //*************************************************************************************

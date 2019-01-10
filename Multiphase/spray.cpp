@@ -628,6 +628,7 @@ void cspray::initparam()
 		LBM_hparam.cv = (3 + 3)*LBM_hparam.R / 2.0;
 		LBM_hparam.wf = 2 * LBM_hparam.delta_T / (2 * LBM_hparam.tau_f + LBM_hparam.delta_T);
 		LBM_hparam.wh = 2 * LBM_hparam.delta_T / (2 * LBM_hparam.tau_h + LBM_hparam.delta_T);
+		LBM_hparam.omega = 0.2;
 
 		int3 tmp_vel_i[19] = { { 0, 0, 0 },		// zero direction
 		{ -1, 0, 0 },		// 6 directions with velocity 1
@@ -648,13 +649,15 @@ void cspray::initparam()
 		{ -1, 0, 1 },
 		{ 1, 0, -1 },
 		{ 1, 0, 1 } };
+		
 		int tmpinvVel[19]= { 0, 2, 1, 4, 3, 6, 5, 10, 9, 8, 7, 14, 13, 12, 11, 18, 17, 16, 15 };
-		float tmpomega[19] = { 1. / 3,
+		float tmpweight[19] = { 1. / 3,
 			1. / 18, 1. / 18, 1. / 18, 1. / 18, 1. / 18, 1. / 18,
 			1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36, 1. / 36 };
 		memcpy(LBM_hparam.vel_i, tmp_vel_i, sizeof(int3) * 19);
 		memcpy(LBM_hparam.invVel_i, tmpinvVel, sizeof(int)*19);
-		memcpy(LBM_hparam.omega, tmpomega, sizeof(float) * 19);
+		memcpy(LBM_hparam.weight, tmpweight, sizeof(float) * 19);
+		
 		
 		
 	}
@@ -1287,8 +1290,8 @@ void cspray:: LBMwatersim()//LBM prpcess  Note£ºcommon FLIP£¬ not multiFLIP
 
 		//1. external force: gravity, buoyancy, surface tension
 		hashAndSortParticles();
-		addexternalforce();
-		printTime(m_btimer, "addexternalforce", time2);
+		//addexternalforce();
+		//printTime(m_btimer, "addexternalforce", time2);
 
 		if (mframe==0)
 		{
@@ -1313,8 +1316,8 @@ void cspray:: LBMwatersim()//LBM prpcess  Note£ºcommon FLIP£¬ not multiFLIP
 			initLBMfield();
 			m_bLBMinit = true;
 		}
-		LBMevolution();
-	//	project_CG(waterux, wateruy, wateruz);
+    	LBMevolution();
+	    //project_CG(waterux, wateruy, wateruz);
 		//printTime(m_btimer, "project_CG_bubble", time2);
 	
 		setWaterBoundaryU(waterux, wateruy, wateruz);

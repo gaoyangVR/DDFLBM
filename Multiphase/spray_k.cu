@@ -26,6 +26,20 @@ __device__ float sradiusInv;
 
 __constant__ float v_max = (float)0.816496580927726;		//!< set maximum velocity to sqrt(2/3), such that f_eq[0] >= 0
 
+
+__host__ __device__ inline int getidx(int i, int j, int k)
+{
+	return (i*NZ*NY + j*NZ + k);
+}
+
+inline __host__ __device__ int dot(int3 a,float3 b)
+{
+	return a.x * b.x + a.y * b.y + a.z*b.z;
+}
+inline __host__ __device__ int dot(float3 a, int3 b)
+{
+	return a.x * b.x + a.y * b.y + a.z*b.z;
+}
 //**********************************LBM*****************************************
 __host__ __device__ float LBMfeq(float3 u, float omega, float rho, int3 vel_i ,float RT0)//vel_i==e[qm][3]
 {
@@ -86,6 +100,123 @@ __host__ __device__ float LBMheq(float3 u, float omega, float rho, int3 vel_i, f
 	heq = omega * p0 * (dot(vel, u) / RT0 + dot(vel, u)*dot(vel, u) / RT0 / RT0 - dot(u, u) / RT0 + 0.5*(dot(vel, vel) / RT0 - 3.0)) + E*feq;
 	return feq;
 }
+
+__device__ inline float CalcEpsilon(char mark, float rho, float mass)
+{
+	if (mark & (TYPEFLUID | TYPEBOUNDARY | TYPESOLID))
+	{
+		return 1;
+	}
+	else if (mark & TYPESURFACE)
+	{
+		assert(	rho >= 0);
+		if (rho > 0)
+		{
+			real epsilon = mass / rho;
+
+			// df->mass can even be < 0 or > df->rho for interface cells to be converted to fluid or empty cells in the next step;
+			// clamp to [0,1] range for numerical stability
+			if (epsilon > 1) {
+				epsilon = 1;
+			}
+			else if (epsilon < 0) {
+				epsilon = 0;
+			}
+			return epsilon;
+		}
+		else
+		{
+			// return (somewhat arbitrarily) a ratio of 1/2 
+			return (real)0.5;
+		}
+	}
+	else	// df->type & CT_EMPTY
+	{
+		assert(mark & TYPEVACUUM);
+
+		return 0;
+	}
+}
+
+__device__ inline float3 CalcLBMNormal(charray mark,farray rho, float* mass, int i,int j, int k)
+{
+	float3 norm;
+	norm.x = 0.5*(CalcEpsilon(mark[getidx(i - 1, j, k)], rho[getidx(i - 1, j, k)], mass[getidx(i - 1, j, k)]) - CalcEpsilon(mark[getidx(i + 1, j, k)], rho[getidx(i + 1, j, k)], mass[getidx(i + 1, j, k)]));
+	norm.y = 0.5*(CalcEpsilon(mark[getidx(i, j - 1, k)], rho[getidx(i, j - 1, k)], mass[getidx(i, j - 1, k)]) - CalcEpsilon(mark[getidx(i, j + 1, k)], rho[getidx(i, j + 1, k)], mass[getidx(i, j + 1, k)]));
+	norm.z = 0.5*(CalcEpsilon(mark[getidx(i, j, k - 1)], rho[getidx(i, j, k - 1)], mass[getidx(i, j, k - 1)]) - CalcEpsilon(mark[getidx(i, j, k + 1)], rho[getidx(i, j, k + 1)], mass[getidx(i, j, k + 1)]));
+	return norm;
+}
+
+__device__ inline float CalcMassExchange(char mark, char neighmark, float df_neigh, float dF_inv)
+{
+	// Table 4.1 in Nils Thuerey's PhD thesis
+	if (mark & TYPENOFLUIDNEIGH)
+	{
+		if (neighmark & TYPENOFLUIDNEIGH)
+			return df_neigh - dF_inv;
+		else // neighbor is standard cell or CT_NO_EMPTY_NEIGH
+			return -dF_inv;
+	}
+	else if (mark & TYPENOEMPTYMEIGH)
+	{
+		if (neighmark & TYPENOEMPTYMEIGH)
+			return df_neigh - dF_inv;
+		else // neighbor is standard cell or CT_NO_FLUID_NEIGH
+			return df_neigh;
+	}
+	else
+	{
+		// current cell is standard cell
+		if(neighmark & TYPENOFLUIDNEIGH)
+			return df_neigh;
+		else if (neighmark & TYPENOEMPTYMEIGH)
+			return -dF_inv;
+		else// neighbor is standard cell
+			return df_neigh - dF_inv;
+	}
+}
+
+__device__ inline void LBMAverageSurrounding(charray mark, float * mass, float &rho, farray tmprho, farray df, float &ux, float &uy, float &uz,farray tmpux, farray tmpuy,farray tmpuz, int i, int j, int k,int Qm)
+{
+	int q;
+	int n = 0,ii,jj,kk,idxneigh;
+	// set mass initially to zero
+	mass[getidx(i,j,k)] = 0;
+	rho = 0;
+	ux = 0; uy = 0; uz = 0;
+	float df_neigh[19] = { 0 };
+	for (q = 1; q < 19; q++)// omit zero vector
+	{
+		ii = i - LBM_dparam.vel_i[q].x;
+		jj = j - LBM_dparam.vel_i[q].y;
+		kk = k - LBM_dparam.vel_i[q].z;
+		idxneigh = getidx(ii, jj, kk);
+		// fluid or interface cells only
+		if (mark[idxneigh] & (TYPEFLUID | TYPESOLID | TYPESURFACE))
+		{
+			rho += tmprho(idxneigh);
+
+			ux += tmpux(idxneigh);
+			uy += tmpuy(idxneigh);
+			uz += tmpuz(idxneigh);
+			n++;
+		}
+	}
+	if (n > 0)
+	{
+		rho /= n;
+		ux /= n;
+		uy /= n;
+		uz /= n;
+	}
+
+	// calculate equilibrium distribution function
+	for (Qm = 0; Qm < 19; Qm++)
+		df[i,j,k,Qm] = LBMfeq(make_float3(ux, uy, uz),
+			LBM_dparam.omega, rho,
+			make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
+			LBM_dparam.R*LBM_dparam.LBM_T0);
+}
 //*********************************LBM****************************************
 
 void copyparamtoGPU(FlipConstant hparam)
@@ -141,10 +272,6 @@ __device__ inline void getijkfrompos(int &i, int &j, int &k, float3 pos, int w, 
 	k = (pos.z >= 0 && pos.z<d) ? ((int)pos.z) : 0;
 }
 
-__host__ __device__ inline int getidx(int i, int j, int k)
-{
-	return (i*NZ*NY + j*NZ + k);
-}
 
 __device__ inline int getidx(int i, int j, int k, int w, int h, int d)
 {
@@ -614,7 +741,7 @@ __global__ void markfluid_dense(charray mark, float *parmass, char *parflag, int
 //************************LBM*****************************
 //判断一下格子里含有的fluid particle的数量，再决定格子的属性
 
-__global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres)//多出surface 格子
+__global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int Thres)//多出surface 格子
 {
 	uint idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
@@ -636,7 +763,7 @@ __global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, 
 
 		if (cntfluidsolid == 0 )
 			mark[idx] = TYPEVACUUM;
-		else if (cntfluidsolid >= 8)  // initial particle number per cell is 8
+		else if (cntfluidsolid >= Thres)  // initial particle number per cell is 8
 			mark[idx] = TYPEFLUID;
 		else mark[idx] = TYPESURFACE; // particle number [1,7]
 		
@@ -5868,39 +5995,44 @@ __global__ void initLBMfield_k(farray ux, farray uy,farray uz, charray mark, far
 		{
 			
 			f0(i,j,k,Qm) = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
-				LBM_dparam.omega[Qm], rho0(idx),
+				LBM_dparam.omega, rho0(idx),
 				make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
 				LBM_dparam.R*LBM_dparam.LBM_T0);
-		//	if(f0(i, j, k, Qm))printf("(%d,%d,%d,%d)-%f\n", i, j, k, Qm, f0(i, j, k, Qm));
-		}
+		//if(f0(i,j,k,Qm))printf("(%d,%d,%d)-%f\n", i, j, k, f0(i, j, k,Qm));
+		}	
 	}
 }
 
-__global__ void driveLBMquantities_k(farray ux, farray uy, farray uz, charray mark, farray f, farray rho)
+__global__ void deriveLBMquantities_k(farray ux, farray uy, farray uz, charray mark, farray f, farray rho)
 {
 	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
+//	for(idx=0;idx<dparam.gnum;idx++)
 	{// calculate average density
 		//if (mark[idx] == TYPEVACUUM || mark[idx] == TYPEBOUNDARY)
 	 //   return;
 		
 		rho.data[idx] = 0; 
-		int i;
-		for ( i= 0; i < 19; i++)
+		int i,j,k;
+		getijk(i,j,k,idx);
+
+		for ( int Qm= 0; Qm < 19; Qm++)
 		{
-			rho.data[idx] += f[i];
+			rho(i,j,k) += f(i,j,k,Qm);
+			
 		}
+				
 		// calculate average velocity u
 		ux.data[idx] = 0;
 		uy.data[idx] = 0;
 		uz.data[idx] = 0;
 		if (rho.data[idx] > 0)
 		{
-			for (i = 0; i < 19; i++)
+			for (int Qm = 0; Qm < 19; Qm++)
 			{
-				ux.data[idx] += f[i] * LBM_dparam.vel_i[i].x;
-				uy.data[idx] += f[i] * LBM_dparam.vel_i[i].y;
-				uz.data[idx] += f[i] * LBM_dparam.vel_i[i].z;
+				ux.data[idx] += f(i,j,k,Qm) * LBM_dparam.vel_i[Qm].x;
+				uy.data[idx] += f(i,j,k,Qm) * LBM_dparam.vel_i[Qm].y;
+				uz.data[idx] += f(i,j,k,Qm) * LBM_dparam.vel_i[Qm].z;
 			}
 			float s = 1 / rho.data[idx];
 			ux.data[idx] *= s;
@@ -5919,30 +6051,138 @@ __global__ void driveLBMquantities_k(farray ux, farray uy, farray uz, charray ma
 
 }
 
-__global__ void CalcLBMcollision(farray ux, farray uy, farray uz, charray mark, farray df, farray dF, farray rho)
+__global__ void CalcLBMcollision_k(farray ux, farray uy, farray uz, charray mark, farray df, farray dF, farray rho)
 {
 	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	
+	//for(int idx=0;idx<dparam.gnum;idx++)
 	if (idx < dparam.gnum)
 	{
 		int i, j, k;
 		getijk(i, j, k, idx);
 		if (mark[idx] == TYPEBOUNDARY || mark[idx] == TYPEVACUUM)
 			return;
-		else
+		
+		for (int Qm = 0; Qm < 19; Qm++)
 		{
-			for(int Qm=0;Qm<19;Qm++)
-			{
-				float f_eq; // calculate equilibrium distribution function
-				f_eq = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
-				LBM_dparam.omega[Qm], rho(idx),
+			// calculate equilibrium distribution function
+			float f_eq;
+			f_eq = LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
+				LBM_dparam.omega, rho(idx),
 				make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
 				LBM_dparam.R*LBM_dparam.LBM_T0);
 
-			
-				dF(i,j,k,Qm) = (1 - LBM_dparam.omega[Qm])*df(i, j, k, Qm) + LBM_dparam.omega[Qm] * f_eq;
-			}
+			// perform collision
+			dF(i, j, k, Qm) = (1 - LBM_dparam.omega)*df(i, j, k, Qm) + LBM_dparam.omega * f_eq;
 
+			//gravity  在粒子上施加重力了 这里暂不需要再加
+			dF(i, j, k, Qm) += rho(idx) * LBM_dparam.weight[Qm] * dot(LBM_dparam.vel_i[Qm], make_float3(0,0,-0.1));//gravity==-0.1向下
+			df(i, j, k, Qm) = dF(i,j,k,Qm);
+			
 		}
+	}
+}
+
+__global__ void LBMStream_k(farray ux, farray uy, farray uz, charray mark, farray df_stream, farray dF, farray rho,float *mass)
+{
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	{
+		int i, j, k;
+		int neighidx;
+		int ii, jj, kk;//after stream
+		getijk(i, j, k, idx);
+		if (mark[idx] == TYPEBOUNDARY || mark[idx] == TYPEVACUUM)
+			return;
+		// copy distribution function corresponding to velocity zero
+		df_stream(i, j, k, 0) = dF(i, j, k, 0);
+
+		float df_neigh[19] = { 0 };
+
+		if (mark[idx] & (TYPEFLUID | TYPESOLID))
+		for (int Qm = 1; Qm < 19; Qm++)//omite zero vector
+		{
+			ii = i - LBM_dparam.vel_i[Qm].x;
+			jj = j - LBM_dparam.vel_i[Qm].y;
+			kk = k - LBM_dparam.vel_i[Qm].z;
+			neighidx = getidx(ii, jj, kk);
+
+			df_neigh[Qm] = dF(ii,jj,kk,Qm);
+
+			// fluid cell must not be adjacent to an empty cell
+			assert((mark[neighidx] & TYPEVACUUM) == 0);
+
+			if (mark[neighidx] & (TYPEFLUID | TYPESURFACE |TYPESOLID))
+			{
+				// mass exchange with fluid or interface cell, Eq. (4.2)
+				mass[idx] += (df_neigh[Qm] - dF(i,j,k,LBM_dparam.invVel_i[Qm]));
+				// standard streaming, Eq. (3.1)
+				df_stream(i, j, k, Qm) = df_neigh[Qm];
+			}
+			else  //type & CT_OBSTACLE
+				df_stream(i, j, k, Qm) = dF[i,j,k,LBM_dparam.invVel_i[Qm]];// reflect density functions, Eq. (3.5)
+
+			
+		}
+		else if (mark[idx] & TYPESURFACE)
+		{
+			const float epsilon = CalcEpsilon(mark[idx], rho[idx], mass[idx]);
+
+			// calculate atmospheric equilibrium distribution function
+			real f_atm_eq[19];
+
+			for(int Qm=0;Qm<19;Qm++)
+				f_atm_eq[Qm] =  LBMfeq(make_float3(ux(i, j, k), uy(i, j, k), uz(i, j, k)),
+					LBM_dparam.omega, 1.0,//rhoA
+					make_int3(LBM_dparam.vel_i[Qm].x, LBM_dparam.vel_i[Qm].y, LBM_dparam.vel_i[Qm].z),
+					LBM_dparam.R*LBM_dparam.LBM_T0);
+
+			for (int Qm = 1; Qm < 19; Qm++)// omit zero vector
+			{
+				df_neigh[Qm] = dF(i - LBM_dparam.vel_i[Qm].x, j - LBM_dparam.vel_i[Qm].y, k - LBM_dparam.vel_i[Qm].z, Qm);
+
+				if (mark[neighidx] & TYPEFLUID)
+				{
+					// mass exchange between fluid and interface cell, Eq. (4.2)
+					mass[idx] += (df_neigh[Qm] - dF(i, j, k, LBM_dparam.invVel_i[Qm]));
+					// standard streaming, Eq. (3.1)
+					df_stream(i, j, k, Qm) = df_neigh[Qm];
+				}
+				else if (mark[neighidx] & TYPESURFACE)
+				{
+					const float eps_neigh = CalcEpsilon(mark[neighidx], rho[neighidx], mass[neighidx]);
+
+					// mass exchange between two interface cells, Eq. (4.3)
+					mass[idx] += CalcMassExchange(mark[idx], mark[neighidx], df_neigh[Qm], dF[i,j,k,LBM_dparam.invVel_i[Qm]])*0.5*(eps_neigh + epsilon);
+
+					// standard streaming, Eq. (3.1)
+					df_stream(i, j, k, Qm) = df_neigh[Qm];
+				}
+				else if (mark[neighidx] & TYPEVACUUM)
+					// no mass exchange from or to empty cell
+					// reconstructed atmospheric distribution function, Eq. (4.5)
+					df_stream(i, j, k, Qm) = f_atm_eq[Qm] + f_atm_eq[LBM_dparam.invVel_i[Qm]] - dF(i,j,k,LBM_dparam.invVel_i[Qm]);
+				else // df_neigh->type & CT_OBSTACLE
+				{
+					// reflect density functions, Eq. (3.5)
+					df_stream(i, j, k, Qm) = dF(i, j, k, LBM_dparam.invVel_i[Qm]);
+				}
+			}
+			// calculate surface normal
+			const float3 norm = CalcLBMNormal(mark, rho, mass, i, j, k);
+			
+			// always use reconstructed atmospheric distribution function for directions along surface normal;
+			// separate loop to handle mass exchange correctly
+			for (int Qm = 1; Qm < 19; Qm++)//omite zero vector
+			{
+				if (dot(norm, LBM_dparam.vel_i[LBM_dparam.invVel_i[Qm]]) > 0) // Eq.4.6
+			   // reconstructed atmospheric distribution function, Eq. (4.5)
+					df_stream(i, j, k, Qm) = f_atm_eq[Qm] + f_atm_eq[LBM_dparam.invVel_i[Qm]] - dF(i, j, k, LBM_dparam.invVel_i[Qm]);
+			}
+		}// df->type & TYPESURFACE
+
+		for (int Qm = 0; Qm < 19; Qm++)
+			dF(i, j, k, Qm) = df_stream(i, j, k, Qm);
 	}
 }
 
@@ -5951,14 +6191,313 @@ __global__ void initLBMmass_k(charray mark, float* dgmass, farray rho)
 	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 	if (idx < dparam.gnum)
 	{
-		if (mark[idx] == TYPEFLUID)
+		if (mark[idx] == TYPEFLUID || mark[idx]== TYPESOLID)
 			dgmass[idx] = rho[idx];
 		else if (mark[idx] == TYPESURFACE)
 			dgmass[idx] = rho[idx] * 0.5;
 		else
 			dgmass[idx] = 0;
 	}
+	
 }
 
+__global__ void LBMFluidmass2rho_k(charray mark, farray rho, float* mass)
+{
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	if (idx < dparam.gnum)
+	{
+		if (mark[idx] & (TYPEFLUID | TYPESOLID))
+		{
+			assert(fabs(rho[idx] / mass[idx] - 1) < 5e-6);
+			rho[idx] = mass[idx];
+		}
+	}
+}
 
+__global__ void  LBMUpdateType1_k(charray mark,charray oldmark, float3 * oldnorm, farray df, farray df_next, farray rho, float* mass)
+{
+	
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+
+	getijk(i, j, k, idx);
+
+	//copy typies
+	oldmark[idx] = mark[idx];
+	oldnorm[idx] = CalcLBMNormal(mark, rho, mass, i, j, k);//4里面用到
+
+	//	current cell
+	//for (int Qm = 0; Qm < 19; Qm++)
+	//	if(df_next(i, j, k, Qm) != df(i, j, k, Qm))printf("!!!!!!!!!!!!!!!!!!!!");
+
+	// check whether interface cells emptied or filled
+	if (mark[idx] & TYPESURFACE)
+	{
+		// Eq. (4.7), and remove interface cell artifacts
+		if ( (mass[idx] > (1 + FILL_OFFSET)*rho[idx]) || (mass[idx] >= (1 - LONELY_THRESH)*rho[idx] && (mark[idx] & TYPENOEMPTYMEIGH)))
+			//surface to fluid cell
+			mark[idx] = TYPE_IF_TO_FLUID;
+		else if ( (mass[idx] < -FILL_OFFSET*rho[idx])
+			|| ((mass[idx] <= LONELY_THRESH*rho[idx]) && (mark[idx] & TYPENOFLUIDNEIGH))
+			|| ((mark[idx] & TYPENOIFACENEIGH) && (mark[idx] & TYPENOFLUIDNEIGH)))
+			// interface to empty cell
+			mark[idx] = TYPE_IF_TO_EMPTY;
+	}
+	// clear neighborhood flags (will be determined later)
+	mark[idx] &= ~(TYPENOFLUIDNEIGH | TYPENOIFACENEIGH | TYPENOIFACENEIGH);
+
+
+	}
+}
+
+__global__ void  LBMUpdateType2_k(charray mark, charray oldmark, farray df, farray df_next, farray rho,farray tmprho, float* mass, farray ux,farray uy,farray uz, farray tmpux, farray tmpuy, farray tmpuz)
+{
+	
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+		getijk(i, j, k, idx);
+		float df_neigh[19] = { 0 };
+
+		tmprho[idx] = rho[idx];
+		tmpux[idx] = ux[idx];
+		tmpuy[idx] = uy[idx];
+		tmpuz[idx] = uz[idx];
+			
+		// set flags for filled interface cells (interface to fluid)
+		if (mark[idx] & TYPE_IF_TO_FLUID)
+		{
+			// keep flag 'CT_IF_TO_FLUID' for later excess mass distribution
+
+			// convert neighboring empty cells to interface cells
+			for (int Qm = 1; Qm < 19; Qm++)// omit zero vector
+			{
+				df(i, j, k, Qm) = df_next(i, j, k, Qm);//useless?
+			
+
+				int i_neigh = i - LBM_dparam.vel_i[Qm].x;
+				int j_neigh = j - LBM_dparam.vel_i[Qm].y;
+				int k_neigh = k - LBM_dparam.vel_i[Qm].z;
+				df_neigh[Qm] = df_next(i_neigh, j_neigh, k_neigh, Qm);
+				int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+				if (mark[idxneig] & TYPEVACUUM)
+				{
+					mark[idxneig] = TYPESURFACE;
+					// initialize cell with average density and velocity of surrounding cells, using f0//!!!易出错
+					LBMAverageSurrounding(oldmark, mass, rho[idxneig],tmprho, df_next, ux[idxneig], uy[idxneig],uz[idxneig], tmpux, tmpuy, tmpuz, i_neigh,j_neigh,k_neigh,Qm);
+					//charray mark, float* mass, float &rho, farray tmprho, farray df, float &ux, float &uy, float &uz, farray tmpux, farray tmpuy, farray tmpuz, int i, int j, int k
+				}
+			}
+
+			// prevent neighboring cells from becoming empty
+			for (int Qm = 1; Qm < 19; Qm++)// omit zero vector
+			{
+				//neighbor cell
+				int i_neigh = i - LBM_dparam.vel_i[Qm].x;
+				int j_neigh = j - LBM_dparam.vel_i[Qm].y;
+				int k_neigh = k - LBM_dparam.vel_i[Qm].z;
+				//df_neigh[Qm] = df_next(i_neigh, j_neigh, k_neigh, Qm);
+				int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+				if (mark[idxneig] & TYPE_IF_TO_EMPTY)
+					mark[idxneig] = TYPESURFACE;
+			//df(i, j, k, Qm) = df_next(i, j, k, Qm)
+			}
+
+		}
+	}
+}
+
+__global__ void  LBMUpdateType3_k(charray mark, farray df, farray df_next, farray rho, float* mass)
+{
+	// set flags for emptied interface cells (interface to empty)
+
+
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+		getijk(i, j, k, idx);
+		if (mark[idx] & TYPE_IF_TO_EMPTY)
+			// keep flag 'CT_IF_TO_EMPTY' for later excess mass distribution
+			// convert neighboring fluid cells to interface cells
+			for (int Qm = 1; Qm < 19; Qm++)//omit zero vector
+			{
+				//neighbor cell
+				int i_neigh = i - LBM_dparam.vel_i[Qm].x;
+				int j_neigh = j - LBM_dparam.vel_i[Qm].y;
+				int k_neigh = k - LBM_dparam.vel_i[Qm].z;
+				int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+				if (mark[idxneig] & TYPEFLUID)
+					mark[idxneig] = TYPESURFACE;
+			}
+	}
+}
+
+__global__ void  LBMUpdateType4_k(charray mark, charray markold, float3* oldnorm, farray df_distr, farray dF, farray rho, float* mass)
+{
+	// distribute excess mass
+
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+		getijk(i, j, k, idx);
+		// calculate surface normal using 'f0', such that excess mass distribution is independent of the filled cell ordering
+		float3 norm = oldnorm[idx];
+
+		//excess mass
+		float mex;
+		if (mark[idx] & TYPE_IF_TO_FLUID)
+		{
+			mex = mass[idx] - rho[idx];
+			// after excess mass has been distributed, remaining mass equals density
+			mass[idx] = rho[idx];
+		}
+		else if (mark[idx] & TYPE_IF_TO_EMPTY)
+		{
+			mex = mass[idx];
+
+			//flip sign of noraml;
+			norm.x = -norm.x;
+			norm.y = -norm.y;
+			norm.z = -norm.z;
+
+			// after negative excess mass has been distributed, remaining mass is zero
+			mass[idx] = 0;
+		}
+		else return;
+		// Eq. (4.9)
+		float eta[19] = { 0 };
+		float eta_total = 0;
+		unsigned int isIF[19] = { 0 };
+		unsigned int numIF = 0;// number of interface cell neighbors
+
+		for (int Qm = 0; Qm < 19; Qm++)
+			df_distr(i, j, k, Qm) = 0;
+
+		for (int Qm = 1; Qm < 19; Qm++)//omit zero vector
+		{
+			// neighbor cell in the direction of velocity vector
+			int i_neigh = i + LBM_dparam.vel_i[Qm].x;
+			int j_neigh = j + LBM_dparam.vel_i[Qm].y;
+			int k_neigh = k + LBM_dparam.vel_i[Qm].z;
+			
+			int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+			if (mark[idxneig] & TYPESURFACE)
+			{
+				eta[Qm] = dot(LBM_dparam.vel_i[Qm], norm);
+				if (eta[Qm] < 0) eta[Qm] = 0;
+
+				eta_total += eta[Qm];
+
+				isIF[Qm] = 1;
+				numIF++;
+			}
+
+			// store excess mass to be distributed in 'f_distr';
+			// don't actually distribute yet to ensure independence of cell traversal order
+
+			// cell for excess mass distribution, store in distribution functions
+			if (eta_total > 0)
+			{
+				float eta_fac = 1 / eta_total;
+				for (int Qm = 1; Qm < 19; Qm++)//omit zere vector
+				{
+					// eta[i] is zero for non-interface cells
+					df_distr(i, j, k, Qm) = mex*eta[Qm] * eta_fac;
+				}
+
+			}
+			else if (numIF > 0)
+			{
+				// distribute uniformly
+				float mex_rel = mex / numIF;
+				for (int Qm = 1; Qm < 19; Qm++)//omit zere vector
+				{
+					df_distr(i, j, k, Qm) = (isIF[Qm] ? mex_rel : 0);  //df
+				}
+			}
+			// else, excess mass cannot be distributed, i.e., has leaked
+		//	dF(i, j, k, Qm) = df_distr(i, j, k, Qm);
+		}
+
+	}
+}
+
+__global__ void  LBMUpdateType5_k(charray mark, farray df, farray dF, farray rho, float* mass)
+{
+	//// collect distributed mass and finalize cell flags
+
+
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+		getijk(i, j, k, idx);
+		if (mark[idx] & TYPESURFACE)
+			for (int Qm = 1; Qm < 19; Qm++)
+			{
+				// neighbor cell in the direction of velocity vector
+				int i_neigh = i - LBM_dparam.vel_i[Qm].x;
+				int j_neigh = j - LBM_dparam.vel_i[Qm].y;
+				int k_neigh = k - LBM_dparam.vel_i[Qm].z;
+
+				int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+				mass[idx] += df(i_neigh,j_neigh,k_neigh,Qm);
+			}
+		else if (mark[idx] & TYPE_IF_TO_FLUID)
+			mark[idx] = TYPEFLUID;
+		else if (mark[idx] & TYPE_IF_TO_EMPTY)
+			mark[idx] = TYPEVACUUM;
+	//	assert((mark[idx] &  (CT_OBSTACLE | CT_FLUID | CT_INTERFACE | CT_EMPTY)) != 0);
+	//	assert((mark[idx] & ~(CT_OBSTACLE | CT_FLUID | CT_INTERFACE | CT_EMPTY)) == 0);
+	}
+}
+
+__global__ void  LBMUpdateType6_k(charray mark, farray df, farray df_next, farray rho, float* mass)
+{
+	// set cell neighborhood flags
+	
+	int idx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	int i, j, k;
+	if (idx < dparam.gnum)
+	{
+		// ignore obstacle cells
+		if (mark[idx] & TYPEBOUNDARY)
+			return;
+
+		// set "no ... neighbor" flags
+		mark[idx] |= (TYPENOEMPTYMEIGH | TYPENOFLUIDNEIGH | TYPENOIFACENEIGH);
+		for(int Qm = 1; Qm < 19; Qm++)//omit zere vector
+		{
+			// neighbor cell in the direction of velocity vector
+			int i_neigh = i - LBM_dparam.vel_i[Qm].x;
+			int j_neigh = j - LBM_dparam.vel_i[Qm].y;
+			int k_neigh = k - LBM_dparam.vel_i[Qm].z;
+
+			int idxneig = getidx(i_neigh, j_neigh, k_neigh);
+
+			if (mark[idxneig] & TYPEFLUID)
+				//remove "no fluid neighbor" flag
+				mark[idx] &= ~TYPENOFLUIDNEIGH;
+			else if (mark[idxneig] & TYPEVACUUM)
+				// remove "no empty neighbor" flag
+				mark[idx] &= ~TYPENOEMPTYMEIGH;
+			else if (mark[idxneig] & TYPESURFACE)
+				// remove "no interface neighbor" flag
+				mark[idx] &= ~TYPENOIFACENEIGH;
+		}
+		// both flags should not be set simultaneously
+		if (mark[idx] & TYPENOEMPTYMEIGH)
+			mark[idx] &= ~TYPENOFLUIDNEIGH;
+	}
+}
 //***********************************************************************************/

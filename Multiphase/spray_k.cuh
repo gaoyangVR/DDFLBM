@@ -229,6 +229,15 @@ __global__ void enforceForceSPH_SLCouple(float3 *ppos, float3 *pvel, float *pden
  __global__ void markfluid_LBM_Init(charray mark, float *parmass, char *parflag, int pnum, uint *gridstart, uint *gridend, int fluidParCntPerGridThres);
  void copyLBMparamtoGPU(LBMConstant hparam);
  __global__ void initLBMfield_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
- __global__ void driveLBMquantities_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
- __global__ void CalcLBMcollision(farray waterux, farray wateruy, farray wateruz, charray mark, farray df,farray dF, farray rho0);
- __global__ void initLBMmass_k(charray mark, float *dgmass, farray rho);
+ __global__ void deriveLBMquantities_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray f0, farray rho0);
+ __global__ void CalcLBMcollision_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray df,farray dF, farray rho0);
+ __global__ void LBMStream_k(farray waterux, farray wateruy, farray wateruz, charray mark, farray df, farray dF, farray rho0,float *mass);
+ __global__ void initLBMmass_k(charray mark, float *dmass, farray rho);
+ __global__ void LBMFluidmass2rho_k(charray mark, farray rho, float* mass);
+
+ __global__ void LBMUpdateType1_k(charray mark,charray oldmark,float3* oldnorm,  farray df, farray dF, farray rho, float* mass);
+ __global__ void LBMUpdateType2_k(charray mark,charray oldmark, farray df, farray dF, farray rho,farray tmprho, float* mass, farray ux, farray uy, farray uz, farray tmpux, farray tmpuy, farray tmpuz);
+ __global__ void LBMUpdateType3_k(charray mark, farray df, farray dF, farray rho, float* mass);
+ __global__ void LBMUpdateType4_k(charray mark, charray oldmark,float3* oldnorm, farray df, farray dF, farray rho, float* mass);
+ __global__ void LBMUpdateType5_k(charray mark, farray df, farray dF, farray rho, float* mass); 
+ __global__ void LBMUpdateType6_k(charray mark, farray df, farray dF, farray rho, float* mass);

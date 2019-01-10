@@ -16,16 +16,26 @@ typedef float real;
 #define M_PI       3.14159265358979323846
 const float DEGtoRAD = 3.1415926f / 180.0f;
 
+#define TYPEBOUNDARY 1<<0     //1
+#define TYPEFLUID 1<<1        // 10
+#define TYPESURFACE 1<<2 // for LBM surface grid 100
+#define TYPESOLID 1<<3   // 1000
+#define TYPEVACUUM 1<<4  // 10000
+#define TYPENOFLUIDNEIGH 1<<5 //100000
+#define TYPENOEMPTYMEIGH 1<<6 //1000000
+#define TYPENOIFACENEIGH 1<<7 //10000000 128
+#define TYPEAIRSOLO 3
+#define TYPEAIR 5
+#define TYPECNT 7
 
-#define TYPEFLUID 0
-#define TYPEAIR 1
-#define TYPEBOUNDARY 2
-#define TYPEVACUUM 3
-#define TYPEAIRSOLO 4
-#define TYPESOLID 5
-#define TYPECNT 6
+#define TYPE_IF_TO_FLUID		(1 << 8)
+#define TYPE_IF_TO_EMPTY		(1 << 9)
+
+
+#define FILL_OFFSET			((real)0.003)
+#define LONELY_THRESH		((real)0.1)
 //**************LBM************
-#define TYPESURFACE 7 // for LBM surface grid
+
 
 typedef unsigned int uint;
 #define CELL_UNDEF 0xffffffff
@@ -357,7 +367,8 @@ struct LBMConstant {
 	float RHO;
 	int3 vel_i[19];
 	int invVel_i[19];
-	float omega[19];
+	float omega;
+	float weight[19];
 	float delta_T;
 	//****************************************************************
 };														
@@ -434,6 +445,7 @@ static inline real CalculateMassExchange(const int type, const int type_neigh, c
 		}
 	}
 }
+
 
 
 //********************************************************************************

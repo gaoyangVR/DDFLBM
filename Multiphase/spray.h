@@ -415,9 +415,12 @@ public:
 		//float *d_F, *d_H; 
 		//float *d_tmpf, *d_tmph; //device values
 		bool m_bLBMinit;
-		farray f0, h0, hrho, drho;
+		farray f0, h0, hrho, drho, dtmprho;
 		farray h_f, h_h;		//host values
-		float *dgmass;   //直接定义为指针
+		float *dmass;   //直接定义为指针
+		charray oldmark;
+		float3 *oldnorm;
+
 
 		farray df;
 		farray dF;
